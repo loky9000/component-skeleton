@@ -6,6 +6,8 @@ OWNER_NAME=$(echo ${REPO_SLUG} | cut -d/ -f1)
 GIT_REVISION=$(git log --pretty=format:'%h' -n 1)
 LAST_COMMIT_AUTHOR=$(git log --pretty=format:'%an' -n1)
 BRANCH_NAME=$(echo $GIT_BRANCH|sed -e 's/origin\///g')
+COMMIT_MESSAGE=$(git log --format=%B -n1)
+VERSION=$(echo $COMMIT_MESSAGE|grep -o 'version:.*'|cut -d: -f2)
 
 function check {
     "$@"
@@ -51,9 +53,15 @@ function replace {
     cat ${REPO_NAME}.yml
 }
 
+function update_version {
+    check sed -i.bak -e 's/[0-9].*\/'${REPO_NAME}'.yml/'${VERSION}'\/'${REPO_NAME}'.yml/g' meta.yml
+    check sed -i.bak -e 's/[0-9].*\/meta.yml/'${VERSION}'\/meta.yml/g' README.md
+}
+
 function publish_github {
     GIT_URL=$(git config remote.origin.url)
     NEW_GIT_URL=$(echo $GIT_URL | sed -e 's/^git:/https:/g' | sed -e 's/^https:\/\//https:\/\/'${GH_TOKEN}':@/')
+    RET=$?
 
     git remote rm origin
     git remote add origin ${NEW_GIT_URL}
@@ -63,7 +71,19 @@ function publish_github {
     rm -rf *.tar.gz
     git commit -a -m "CI: Success build ${BUILD_NUMBER} [ci skip]"
     git checkout -b build
+  if [[ ! -z $VERSION ]]; then
+    git tag |grep ${VERSION}
+  if [[ $RET -eq 0 ]]; then
+    git tag -d ${VERSION}
+    git tag -a ${VERSION} -m "Version: ${VERSION}"
+    git push -q origin build:${BRANCH_NAME} --tags -f
+  else
+    git tag -a ${VERSION} -m "Version: ${VERSION}"
+    git push -q origin build:${BRANCH_NAME} --tags
+  fi
+  else
     git push -q origin build:${BRANCH_NAME}
+  fi
     git checkout master
     git branch -D build
 }
@@ -77,7 +97,9 @@ if [[ ${LAST_COMMIT_AUTHOR} != "Jenkins" ]]; then
 
         popd
   if [[ ${PULL_REQUEST} == "false" ]]; then
-
+  if [[ ! -z $VERSION ]]; then
+        update_version
+  fi
         publish_github
   fi
 
